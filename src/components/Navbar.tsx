@@ -86,7 +86,7 @@ const Navbar = () => {
           <img
             src={nikaiLogo}
             alt="NikAI"
-            className="h-14 sm:h-20 shrink-0"
+            className="h-8 sm:h-10 shrink-0"
           />
           <div className="hidden md:flex items-center gap-8">
             {navLinks.map((link) => (
