@@ -4,7 +4,7 @@ import { Send, Phone, MoreVertical, Loader2 } from "lucide-react";
 import { sectionVariants } from "@/lib/animations";
 
 /* ─── Webhook Config ─── */
-const N8N_WEBHOOK_URL = "https://n8n.srv1296860.hstgr.cloud/webhook-test/9e499f97-ad6b-4bfe-8e66-4ca10c664bf4";
+const N8N_WEBHOOK_URL = import.meta.env.VITE_N8N_WEBHOOK_URL || "https://n8n.srv1296860.hstgr.cloud/webhook/9e499f97-ad6b-4bfe-8e66-4ca10c664bf4";
 
 /* ─── Language config ─── */
 interface LangConfig {
@@ -85,49 +85,7 @@ const TypingIndicator = () => (
   </div>
 );
 
-/* ─── Robot Mascot ─── */
-const NikRobot = ({ isSpinning, antennaGlow }: { isSpinning: boolean; antennaGlow: boolean }) => {
-  return (
-    <motion.div
-      className="nik-robot-wrap"
-      animate={{ 
-        rotate: isSpinning ? 720 : 0,
-        y: [0, -4, 0]
-      }}
-      transition={{ 
-        rotate: { duration: 0.8, ease: "easeInOut" },
-        y: { duration: 3, repeat: Infinity, ease: "easeInOut" }
-      }}
-    >
-      <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-        {/* Antenna */}
-        <motion.circle 
-          cx="32" cy="8" r="4" 
-          fill={antennaGlow ? "#FF4081" : "#E040FB"}
-          animate={antennaGlow ? { scale: [1, 1.4, 1], opacity: [1, 0.8, 1] } : {}}
-          transition={antennaGlow ? { duration: 0.2, repeat: 2 } : {}}
-        />
-        <rect x="30" y="12" width="4" height="6" fill="#9C6FE4" />
-        
-        {/* Head */}
-        <rect x="16" y="18" width="32" height="24" rx="8" fill="#FFFFFF" stroke="#9C6FE4" strokeWidth="2" />
-        
-        {/* Eyes */}
-        <circle cx="24" cy="30" r="3" fill="#0D0D1F" />
-        <circle cx="40" cy="30" r="3" fill="#0D0D1F" />
-        <motion.rect 
-          x="22" y="28" width="4" height="1" fill="#4AE68A" 
-          animate={{ opacity: [0, 1, 0] }} 
-          transition={{ duration: 4, repeat: Infinity }}
-        />
-        
-        {/* Body */}
-        <rect x="18" y="44" width="28" height="18" rx="4" fill="#F0F0F0" stroke="#9C6FE4" strokeWidth="2" />
-        <rect x="24" y="48" width="16" height="4" rx="2" fill="#4AE68A" opacity="0.6" />
-      </svg>
-    </motion.div>
-  );
-};
+
 
 /* ═══════════════════════════════════════════════════════════
    Main Component
@@ -150,10 +108,6 @@ const LiveDemo = () => {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isSpinning, setIsSpinning] = useState(false);
-  const [antennaGlow, setAntennaGlow] = useState(false);
-  const [showRobotBubble, setShowRobotBubble] = useState(true);
-  const [robotText, setRobotText] = useState("Hi! I'm Nik.");
 
   const scrollToBottom = useCallback(() => {
     if (chatRef.current) {
@@ -165,13 +119,7 @@ const LiveDemo = () => {
     scrollToBottom();
   }, [messages, isLoading, scrollToBottom]);
 
-  /* ─── Robot Behavior ─── */
-  const triggerCelebration = useCallback(() => {
-    setIsSpinning(true);
-    setAntennaGlow(true);
-    setTimeout(() => setIsSpinning(false), 800);
-    setTimeout(() => setAntennaGlow(false), 600);
-  }, []);
+
 
   /* ─── Switch language ─── */
   const switchLanguage = (langKey: string) => {
@@ -186,8 +134,6 @@ const LiveDemo = () => {
     ]);
     setInput("");
     setIsLoading(false);
-    setRobotText(`Switched to ${LANGUAGES[langKey].label}!`);
-    setTimeout(() => setRobotText("How can I help?"), 3000);
   };
 
   /* ─── Send message (n8n Bridge) ─── */
@@ -241,13 +187,9 @@ const LiveDemo = () => {
         },
       ]);
 
-      // 4. Update robot speech bubble
-      setRobotText("Got it! 😊");
       if (botReply.includes("✅ Booked") || botReply.includes("Confirmed")) {
-        triggerCelebration();
-        setRobotText("Booked! 🎉");
+        // Booking confirmed
       }
-      setTimeout(() => setRobotText("Ask me anything!"), 5000);
 
     } catch (err) {
       console.error("n8n error:", err);
@@ -297,25 +239,8 @@ const LiveDemo = () => {
           </p>
         </motion.div>
 
-        {/* Mascot + Phone Layout */}
+        {/* Phone Layout */}
         <div className="wa-demo-layout">
-          {/* Robot Mascot Column */}
-          <div className="nik-mascot-col">
-            <AnimatePresence>
-              {showRobotBubble && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.8, y: 10 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.8 }}
-                  className="nik-robot-bubble"
-                >
-                  {robotText}
-                  <div className="nik-bubble-arrow" />
-                </motion.div>
-              )}
-            </AnimatePresence>
-            <NikRobot isSpinning={isSpinning} antennaGlow={antennaGlow} />
-          </div>
 
           {/* Phone frame */}
           <motion.div
@@ -487,42 +412,7 @@ const LiveDemo = () => {
           margin-bottom: 40px;
         }
 
-        /* Mascot */
-        .nik-mascot-col {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          position: absolute;
-          bottom: 0;
-          left: 0;
-          width: 120px;
-          pointer-events: none;
-          z-index: 100;
-        }
-        .nik-robot-bubble {
-          background: #FFFFFF;
-          border: 2px solid #9C6FE4;
-          padding: 8px 16px;
-          border-radius: 16px;
-          font-size: 13px;
-          font-weight: 600;
-          color: #0D0D1F;
-          margin-bottom: 12px;
-          white-space: nowrap;
-          position: relative;
-          box-shadow: 0 4px 12px rgba(156,111,228,0.15);
-          pointer-events: auto;
-        }
-        .nik-bubble-arrow {
-          position: absolute;
-          bottom: -8px;
-          left: 50%;
-          transform: translateX(-50%);
-          width: 0; height: 0;
-          border-left: 8px solid transparent;
-          border-right: 8px solid transparent;
-          border-top: 8px solid #9C6FE4;
-        }
+
 
         .wa-phone-frame {
           width: 100%;
