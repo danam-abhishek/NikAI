@@ -21,33 +21,46 @@ const App = () => {
 
   useEffect(() => {
     const checkLaunchStatus = async () => {
-      // Fast path: localStorage says already launched
-      if (localStorage.getItem(STORAGE_KEY) === 'true') {
-        setIsUnlocked(true);
-        setChecking(false);
-        return;
-      }
+      console.log('[NikAI] App: Checking launch status...');
+      console.log('[NikAI] App: Supabase configured:', isSupabaseConfigured);
 
-      // Check Supabase for cross-device persistence
+      // PRIMARY SOURCE: Always check Supabase first
       if (isSupabaseConfigured) {
         try {
+          console.log('[NikAI] App: Fetching from Supabase...');
           const { data, error } = await supabase
             .from('launch_status')
             .select('launched')
             .eq('id', 1)
             .single();
 
-          if (data && !error && data.launched) {
+          console.log('[NikAI] App: Supabase response:', { data, error: error?.message });
+
+          if (data && !error && data.launched === true) {
+            console.log('[NikAI] App: launched=true in database → skipping lock screen');
             localStorage.setItem(STORAGE_KEY, 'true');
             setIsUnlocked(true);
             setChecking(false);
             return;
           }
+
+          if (data && !error && data.launched === false) {
+            console.log('[NikAI] App: launched=false in database → showing lock screen');
+            localStorage.removeItem(STORAGE_KEY);
+            setIsUnlocked(false);
+            setChecking(false);
+            return;
+          }
         } catch (err) {
-          console.error('[NikAI] App: Supabase check failed:', err);
+          console.error('[NikAI] App: Supabase fetch failed:', err);
         }
       }
 
+      // FALLBACK ONLY: Use localStorage if Supabase is unavailable
+      console.log('[NikAI] App: Falling back to localStorage');
+      if (localStorage.getItem(STORAGE_KEY) === 'true') {
+        setIsUnlocked(true);
+      }
       setChecking(false);
     };
 
