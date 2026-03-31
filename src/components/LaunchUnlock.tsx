@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 
 /* ─── Constants ─── */
@@ -6,7 +6,11 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 const STORAGE_KEY = 'nikai_launch_unlocked';
 const LOCKS_KEY = 'nikai_locks_state';
 
-const MEMBERS = ['Member 1', 'Member 2', 'Member 3'];
+const MEMBERS = [
+  { name: 'Member 1' },
+  { name: 'Member 2' },
+  { name: 'Member 3' },
+];
 
 const SUCCESS_MSGS = [
   'Member 1 unlocked — launch sequence initiated!',
@@ -57,8 +61,8 @@ async function requestBiometric(): Promise<boolean> {
           displayName: 'NikAI Member',
         },
         pubKeyCredParams: [
-          { alg: -7, type: 'public-key' },
-          { alg: -257, type: 'public-key' },
+          { alg: -7, type: 'public-key' },   // ES256
+          { alg: -257, type: 'public-key' },  // RS256
         ],
         authenticatorSelection: {
           authenticatorAttachment: 'platform',
@@ -71,8 +75,51 @@ async function requestBiometric(): Promise<boolean> {
     });
     return !!credential;
   } catch (err: any) {
-    if (err.name === 'NotAllowedError') return false;
+    if (err.name === 'NotAllowedError') return false; // user cancelled
     throw err;
+  }
+}
+
+/* ─── Supabase helpers ─── */
+
+async function fetchLockState(): Promise<LockRow | null> {
+  if (!isSupabaseConfigured) return null;
+  try {
+    const { data, error } = await supabase
+      .from('launch_status')
+      .select('*')
+      .eq('id', 1)
+      .single();
+    if (error) {
+      console.error('[NikAI] Supabase fetch error:', error.message);
+      return null;
+    }
+    return data as LockRow;
+  } catch (err) {
+    console.error('[NikAI] Supabase fetch exception:', err);
+    return null;
+  }
+}
+
+async function updateLockState(
+  lockIndex: number,
+  isLaunched: boolean,
+): Promise<void> {
+  if (!isSupabaseConfigured) return;
+  const update: Record<string, boolean | string> = {
+    [LOCK_COLS[lockIndex]]: true,
+    updated_at: new Date().toISOString(),
+  };
+  if (isLaunched) update.launched = true;
+
+  try {
+    const { error } = await supabase
+      .from('launch_status')
+      .update(update)
+      .eq('id', 1);
+    if (error) console.error('[NikAI] Supabase update error:', error.message);
+  } catch (err) {
+    console.error('[NikAI] Supabase update exception:', err);
   }
 }
 
@@ -89,91 +136,44 @@ export default function LaunchUnlock({
   const [authenticating, setAuthenticating] = useState([false, false, false]);
   const [celebrating, setCelebrating] = useState(false);
   const [syncing, setSyncing] = useState(true);
-  const confettiFired = useRef(false);
 
-  /* ─── 1. Initial load: ALWAYS fetch from Supabase (primary source) ─── */
+  /* ─── 1. Initial load: Supabase → localStorage fallback ─── */
   useEffect(() => {
     let cancelled = false;
 
     const init = async () => {
-      console.log('[NikAI] LaunchUnlock: Initializing...');
-      console.log('[NikAI] LaunchUnlock: Supabase configured:', isSupabaseConfigured);
-
-      // PRIMARY SOURCE: Supabase database
-      if (isSupabaseConfigured) {
-        try {
-          console.log('[NikAI] LaunchUnlock: Fetching lock state from Supabase...');
-          const { data, error } = await supabase
-            .from('launch_status')
-            .select('*')
-            .eq('id', 1)
-            .single();
-
-          console.log('[NikAI] LaunchUnlock: Supabase response:', {
-            data,
-            error: error?.message,
-          });
-
-          if (cancelled) return;
-
-          if (data && !error) {
-            const row = data as LockRow;
-            const state = [row.lock1, row.lock2, row.lock3];
-            const allTrue = state.every(Boolean);
-
-            console.log('[NikAI] LaunchUnlock: Lock state from DB:', {
-              lock1: row.lock1,
-              lock2: row.lock2,
-              lock3: row.lock3,
-              launched: row.launched,
-            });
-
-            setUnlocked(state);
-            localStorage.setItem(LOCKS_KEY, JSON.stringify(state));
-
-            // All 3 locks true → ensure launched=true and celebrate
-            if (allTrue || row.launched) {
-              // Auto-fix: if all locks true but launched wasn't set
-              if (allTrue && !row.launched) {
-                console.log('[NikAI] LaunchUnlock: All locks true but launched=false → fixing...');
-                await supabase
-                  .from('launch_status')
-                  .update({ launched: true, updated_at: new Date().toISOString() })
-                  .eq('id', 1);
-              }
-
-              console.log('[NikAI] LaunchUnlock: Launched → showing celebration');
-              localStorage.setItem(STORAGE_KEY, 'true');
-              setCelebrating(true);
-              if (!confettiFired.current) {
-                confettiFired.current = true;
-                setTimeout(() => spawnConfetti(), 300);
-              }
-              setSyncing(false);
-              return;
-            }
-
-            setSyncing(false);
-            return;
-          }
-        } catch (err) {
-          console.error('[NikAI] LaunchUnlock: Supabase fetch failed:', err);
-        }
+      // Fast path: already launched
+      if (localStorage.getItem(STORAGE_KEY) === 'true') {
+        onUnlocked();
+        return;
       }
 
-      // FALLBACK: localStorage only if Supabase is unavailable
-      if (!cancelled) {
-        console.log('[NikAI] LaunchUnlock: Falling back to localStorage');
+      // Try Supabase
+      const row = await fetchLockState();
+
+      if (cancelled) return;
+
+      if (row) {
+        const state = [row.lock1, row.lock2, row.lock3];
+        setUnlocked(state);
+        localStorage.setItem(LOCKS_KEY, JSON.stringify(state));
+
+        if (row.launched) {
+          localStorage.setItem(STORAGE_KEY, 'true');
+          onUnlocked();
+          return;
+        }
+      } else {
+        // Fallback to localStorage
         const saved = localStorage.getItem(LOCKS_KEY);
         if (saved) {
           try {
-            const parsed = JSON.parse(saved);
-            console.log('[NikAI] LaunchUnlock: localStorage state:', parsed);
-            setUnlocked(parsed);
-          } catch { /* ignore */ }
+            setUnlocked(JSON.parse(saved));
+          } catch { /* ignore bad data */ }
         }
-        setSyncing(false);
       }
+
+      setSyncing(false);
     };
 
     init();
@@ -183,8 +183,6 @@ export default function LaunchUnlock({
   /* ─── 2. Real-time listener for cross-device sync ─── */
   useEffect(() => {
     if (!isSupabaseConfigured) return;
-
-    console.log('[NikAI] LaunchUnlock: Setting up realtime listener...');
 
     const channel = supabase
       .channel('launch_realtime')
@@ -199,30 +197,16 @@ export default function LaunchUnlock({
         (payload) => {
           const d = payload.new as LockRow;
           const state = [d.lock1, d.lock2, d.lock3];
-
-          console.log('[NikAI] LaunchUnlock: Realtime update received:', {
-            lock1: d.lock1,
-            lock2: d.lock2,
-            lock3: d.lock3,
-            launched: d.launched,
-          });
-
           setUnlocked(state);
           localStorage.setItem(LOCKS_KEY, JSON.stringify(state));
 
           if (d.launched) {
             setCelebrating(true);
             localStorage.setItem(STORAGE_KEY, 'true');
-            if (!confettiFired.current) {
-              confettiFired.current = true;
-              spawnConfetti();
-            }
           }
         },
       )
-      .subscribe((status) => {
-        console.log('[NikAI] LaunchUnlock: Realtime subscription status:', status);
-      });
+      .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
@@ -240,45 +224,19 @@ export default function LaunchUnlock({
       const success = await requestBiometric();
 
       if (success) {
-        console.log(`[NikAI] LaunchUnlock: Lock ${i + 1} biometric verified ✓`);
-
         const next = [...unlocked];
         next[i] = true;
         setUnlocked(next);
         localStorage.setItem(LOCKS_KEY, JSON.stringify(next));
 
         const allDone = next.every(Boolean);
-
-        // Update Supabase (primary)
-        if (isSupabaseConfigured) {
-          const update: Record<string, boolean | string> = {
-            [LOCK_COLS[i]]: true,
-            updated_at: new Date().toISOString(),
-          };
-          if (allDone) update.launched = true;
-
-          console.log(`[NikAI] LaunchUnlock: Updating Supabase:`, update);
-
-          const { error } = await supabase
-            .from('launch_status')
-            .update(update)
-            .eq('id', 1);
-
-          if (error) {
-            console.error('[NikAI] LaunchUnlock: Supabase update error:', error.message);
-          } else {
-            console.log('[NikAI] LaunchUnlock: Supabase updated successfully');
-          }
-        }
+        await updateLockState(i, allDone);
 
         if (allDone) {
           setTimeout(() => {
             setCelebrating(true);
             localStorage.setItem(STORAGE_KEY, 'true');
-            if (!confettiFired.current) {
-              confettiFired.current = true;
-              spawnConfetti();
-            }
+            spawnConfetti();
           }, 600);
         }
       } else {
@@ -359,15 +317,15 @@ export default function LaunchUnlock({
           WebkitTextFillColor: 'transparent',
           lineHeight: 1.3,
         }}>
-          Congratulations! 🎉
+          NikAI has officially<br />launched! 🎉
         </h1>
         <p style={{
           fontSize: '15px', color: '#7A7A99',
-          maxWidth: '400px', lineHeight: 1.7,
+          maxWidth: '360px', lineHeight: 1.7,
         }}>
-          Your NikAI has just launched successfully 🎉<br />
           All 3 members have unlocked the system.<br />
-          NikAI is live and ready to run clinic operations.
+          Congratulations — NikAI is live and ready<br />
+          to run clinic operations automatically.
         </p>
         <button
           onClick={onUnlocked}
@@ -492,7 +450,7 @@ export default function LaunchUnlock({
                   <div style={{
                     fontSize: '14px', fontWeight: 600, color: '#F2F2FF',
                   }}>
-                    {MEMBERS[i]}
+                    {MEMBERS[i].name}
                   </div>
                 </div>
 
