@@ -136,35 +136,68 @@ export default function LaunchUnlock({
   const [authenticating, setAuthenticating] = useState([false, false, false]);
   const [celebrating, setCelebrating] = useState(false);
   const [syncing, setSyncing] = useState(true);
+  const [hasCelebrated, setHasCelebrated] = useState(false);
 
-  /* ─── 1. Initial load: Supabase → localStorage fallback ─── */
+  /* ─── 4. Confetti ─── */
+  const spawnConfetti = useCallback(() => {
+    const colors = ['#E040FB', '#9C6FE4', '#4AE68A', '#F5A623', '#FF6B6B', '#fff'];
+    for (let k = 0; k < 120; k++) {
+      setTimeout(() => {
+        const el = document.createElement('div');
+        const size = 6 + Math.random() * 8;
+        el.style.cssText = `
+          position:fixed;
+          left:${Math.random() * 100}vw;
+          top:-10px;
+          width:${size}px;
+          height:${size}px;
+          background:${colors[Math.floor(Math.random() * colors.length)]};
+          border-radius:${Math.random() > 0.5 ? '50%' : '2px'};
+          z-index:9999;
+          pointer-events:none;
+          animation:confettiFall ${2 + Math.random() * 3}s linear forwards;
+        `;
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 4000);
+      }, k * 20);
+    }
+  }, []);
+
+  /* ─── 1. Initial load: Supabase (Priority) ─── */
   useEffect(() => {
     let cancelled = false;
 
     const init = async () => {
-      // Fast path: already launched
-      if (localStorage.getItem(STORAGE_KEY) === 'true') {
-        onUnlocked();
-        return;
-      }
+      console.log('[NikAI] Launch: Fetching data from Supabase...');
 
-      // Try Supabase
+      // Try Supabase first
       const row = await fetchLockState();
 
       if (cancelled) return;
 
       if (row) {
+        console.log('[NikAI] Launch: Database state:', row);
         const state = [row.lock1, row.lock2, row.lock3];
         setUnlocked(state);
         localStorage.setItem(LOCKS_KEY, JSON.stringify(state));
 
-        if (row.launched) {
+        // Completion check: if all locks are true, we should be "launched"
+        const allDone = state.every(Boolean);
+
+        if (row.launched || allDone) {
+          console.log('[NikAI] Launch: System is already launched (DB/Locks)');
           localStorage.setItem(STORAGE_KEY, 'true');
-          onUnlocked();
+          
+          if (!hasCelebrated) {
+            setCelebrating(true);
+            setHasCelebrated(true);
+            spawnConfetti();
+          }
           return;
         }
       } else {
-        // Fallback to localStorage
+        console.warn('[NikAI] Launch: Database unavailable, using localStorage');
+        // Fallback to localStorage only if Supabase fails
         const saved = localStorage.getItem(LOCKS_KEY);
         if (saved) {
           try {
@@ -178,7 +211,7 @@ export default function LaunchUnlock({
 
     init();
     return () => { cancelled = true; };
-  }, [onUnlocked]);
+  }, [onUnlocked, hasCelebrated, spawnConfetti]);
 
   /* ─── 2. Real-time listener for cross-device sync ─── */
   useEffect(() => {
@@ -195,14 +228,21 @@ export default function LaunchUnlock({
           filter: 'id=eq.1',
         },
         (payload) => {
+          console.log('[NikAI] Launch: Real-time update received:', payload.new);
           const d = payload.new as LockRow;
           const state = [d.lock1, d.lock2, d.lock3];
           setUnlocked(state);
           localStorage.setItem(LOCKS_KEY, JSON.stringify(state));
 
-          if (d.launched) {
-            setCelebrating(true);
+          const allDone = state.every(Boolean);
+
+          if (d.launched || allDone) {
             localStorage.setItem(STORAGE_KEY, 'true');
+            if (!hasCelebrated) {
+              setCelebrating(true);
+              setHasCelebrated(true);
+              spawnConfetti();
+            }
           }
         },
       )
@@ -211,7 +251,7 @@ export default function LaunchUnlock({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [hasCelebrated, spawnConfetti]);
 
   /* ─── 3. Biometric unlock handler ─── */
   const handleUnlock = async (i: number) => {
@@ -230,13 +270,19 @@ export default function LaunchUnlock({
         localStorage.setItem(LOCKS_KEY, JSON.stringify(next));
 
         const allDone = next.every(Boolean);
+        
+        // Update DB
         await updateLockState(i, allDone);
 
         if (allDone) {
+          console.log('[NikAI] Launch: All locks unlocked! Triggering celebration.');
           setTimeout(() => {
-            setCelebrating(true);
-            localStorage.setItem(STORAGE_KEY, 'true');
-            spawnConfetti();
+            if (!hasCelebrated) {
+              setCelebrating(true);
+              setHasCelebrated(true);
+              localStorage.setItem(STORAGE_KEY, 'true');
+              spawnConfetti();
+            }
           }, 600);
         }
       } else {
@@ -267,31 +313,6 @@ export default function LaunchUnlock({
     }, 4000);
   };
 
-  /* ─── 4. Confetti ─── */
-  const spawnConfetti = useCallback(() => {
-    const colors = ['#E040FB', '#9C6FE4', '#4AE68A', '#F5A623', '#FF6B6B', '#fff'];
-    for (let k = 0; k < 120; k++) {
-      setTimeout(() => {
-        const el = document.createElement('div');
-        const size = 6 + Math.random() * 8;
-        el.style.cssText = `
-          position:fixed;
-          left:${Math.random() * 100}vw;
-          top:-10px;
-          width:${size}px;
-          height:${size}px;
-          background:${colors[Math.floor(Math.random() * colors.length)]};
-          border-radius:${Math.random() > 0.5 ? '50%' : '2px'};
-          z-index:9999;
-          pointer-events:none;
-          animation:confettiFall ${2 + Math.random() * 3}s linear forwards;
-        `;
-        document.body.appendChild(el);
-        setTimeout(() => el.remove(), 4000);
-      }, k * 20);
-    }
-  }, []);
-
   /* ─── Derived state ─── */
   const count = unlocked.filter(Boolean).length;
   const progress = (count / 3) * 100;
@@ -317,7 +338,7 @@ export default function LaunchUnlock({
           WebkitTextFillColor: 'transparent',
           lineHeight: 1.3,
         }}>
-          NikAI has officially<br />launched! 🎉
+          Congratulations, your NikAI has<br />just launched successfully 🎉
         </h1>
         <p style={{
           fontSize: '15px', color: '#7A7A99',

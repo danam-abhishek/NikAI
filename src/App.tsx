@@ -21,14 +21,9 @@ const App = () => {
 
   useEffect(() => {
     const checkLaunchStatus = async () => {
-      // Fast path: localStorage says already launched
-      if (localStorage.getItem(STORAGE_KEY) === 'true') {
-        setIsUnlocked(true);
-        setChecking(false);
-        return;
-      }
+      console.log('[NikAI] App: Fetching launch status...');
 
-      // Check Supabase for cross-device persistence
+      // 1. Try Supabase first (Database is the source of truth)
       if (isSupabaseConfigured) {
         try {
           const { data, error } = await supabase
@@ -37,15 +32,28 @@ const App = () => {
             .eq('id', 1)
             .single();
 
-          if (data && !error && data.launched) {
-            localStorage.setItem(STORAGE_KEY, 'true');
-            setIsUnlocked(true);
-            setChecking(false);
-            return;
+          if (data && !error) {
+            console.log('[NikAI] App: Database launch status:', data.launched);
+            if (data.launched) {
+              localStorage.setItem(STORAGE_KEY, 'true');
+              setIsUnlocked(true);
+              setChecking(false);
+              return;
+            }
+          } else {
+            console.warn('[NikAI] App: Supabase fetch error or no data:', error?.message);
           }
         } catch (err) {
-          console.error('[NikAI] App: Supabase check failed:', err);
+          console.error('[NikAI] App: Supabase fetch exception:', err);
         }
+      }
+
+      // 2. Fallback to localStorage for speed if Supabase fails or is unconfigured
+      if (localStorage.getItem(STORAGE_KEY) === 'true') {
+        console.log('[NikAI] App: Using localStorage fallback (unlocked)');
+        setIsUnlocked(true);
+      } else {
+        console.log('[NikAI] App: System remains locked');
       }
 
       setChecking(false);
