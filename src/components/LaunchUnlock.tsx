@@ -1,10 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-
 /* ─── Constants ─── */
-
-const STORAGE_KEY = 'nikai_launch_unlocked';
-const LOCKS_KEY = 'nikai_locks_state';
 
 const MEMBERS = [
   { name: 'Member 1' },
@@ -168,42 +164,29 @@ export default function LaunchUnlock({
     let cancelled = false;
 
     const init = async () => {
-      console.log('[NikAI] Launch: Fetching data from Supabase...');
+      console.log('[NikAI] Launch: Single source sync from Supabase...');
 
-      // Try Supabase first
       const row = await fetchLockState();
 
       if (cancelled) return;
 
       if (row) {
-        console.log('[NikAI] Launch: Database state:', row);
+        console.log('[NikAI] Launch: Database state confirmed:', row);
         const state = [row.lock1, row.lock2, row.lock3];
         setUnlocked(state);
-        localStorage.setItem(LOCKS_KEY, JSON.stringify(state));
 
-        // Completion check: if all locks are true, we should be "launched"
+        // Completion check
         const allDone = state.every(Boolean);
 
         if (row.launched || allDone) {
-          console.log('[NikAI] Launch: System is already launched (DB/Locks)');
-          localStorage.setItem(STORAGE_KEY, 'true');
-          
           if (!hasCelebrated) {
             setCelebrating(true);
             setHasCelebrated(true);
             spawnConfetti();
           }
-          return;
         }
       } else {
-        console.warn('[NikAI] Launch: Database unavailable, using localStorage');
-        // Fallback to localStorage only if Supabase fails
-        const saved = localStorage.getItem(LOCKS_KEY);
-        if (saved) {
-          try {
-            setUnlocked(JSON.parse(saved));
-          } catch { /* ignore bad data */ }
-        }
+        console.error('[NikAI] Launch: Critical failure — could not connect to database.');
       }
 
       setSyncing(false);
@@ -211,7 +194,7 @@ export default function LaunchUnlock({
 
     init();
     return () => { cancelled = true; };
-  }, [onUnlocked, hasCelebrated, spawnConfetti]);
+  }, [hasCelebrated, spawnConfetti]);
 
   /* ─── 2. Real-time listener for cross-device sync ─── */
   useEffect(() => {
@@ -228,16 +211,14 @@ export default function LaunchUnlock({
           filter: 'id=eq.1',
         },
         (payload) => {
-          console.log('[NikAI] Launch: Real-time update received:', payload.new);
+          console.log('[NikAI] Launch: Real-time update:', payload.new);
           const d = payload.new as LockRow;
           const state = [d.lock1, d.lock2, d.lock3];
           setUnlocked(state);
-          localStorage.setItem(LOCKS_KEY, JSON.stringify(state));
 
           const allDone = state.every(Boolean);
 
           if (d.launched || allDone) {
-            localStorage.setItem(STORAGE_KEY, 'true');
             if (!hasCelebrated) {
               setCelebrating(true);
               setHasCelebrated(true);
@@ -267,7 +248,6 @@ export default function LaunchUnlock({
         const next = [...unlocked];
         next[i] = true;
         setUnlocked(next);
-        localStorage.setItem(LOCKS_KEY, JSON.stringify(next));
 
         const allDone = next.every(Boolean);
         
@@ -275,12 +255,11 @@ export default function LaunchUnlock({
         await updateLockState(i, allDone);
 
         if (allDone) {
-          console.log('[NikAI] Launch: All locks unlocked! Triggering celebration.');
+          console.log('[NikAI] Launch: Final lock achieved! Syncing with database...');
           setTimeout(() => {
             if (!hasCelebrated) {
               setCelebrating(true);
               setHasCelebrated(true);
-              localStorage.setItem(STORAGE_KEY, 'true');
               spawnConfetti();
             }
           }, 600);
